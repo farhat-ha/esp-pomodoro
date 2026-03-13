@@ -7,7 +7,7 @@ typedef enum
     POMODORO_STATE_IDLE,
     POMODORO_STATE_WORK,
     POMODORO_STATE_SHORT_BREAK,
-    POMODORO_STATE_LONG_BREAK
+    POMODORO_STATE_LONG_BREAK,
 } pomodoro_state_t;
 
 typedef struct pomodoro_t pomodoro_t;

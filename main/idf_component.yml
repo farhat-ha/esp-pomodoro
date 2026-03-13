@@ -16,3 +16,4 @@ dependencies:
   #   public: true
   espressif/esp_lcd_gc9a01: ^2.0.4
   espressif/esp_lvgl_adapter: ^0.4.0
+  espressif/button: ^4.1.6

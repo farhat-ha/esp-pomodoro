@@ -11,6 +11,7 @@ struct pomodoro_t
 {
     pomodoro_config_t config;
     pomodoro_state_t current_state;
+    pomodoro_state_t previous_state;
     uint16_t current_timer;
     uint8_t completed_sessions;
 };
@@ -60,12 +61,13 @@ pomodoro_t *pomodoro_init(const pomodoro_config_t *config)
     }
     pomodoro->config = *config;
     pomodoro->current_state = POMODORO_STATE_IDLE;
+    pomodoro->previous_state = POMODORO_STATE_IDLE;
     pomodoro->current_timer = pomodoro->config.work_duration_seconds;
 
     return pomodoro;
 }
 
-void pomdooro_destroy(pomodoro_t *pomodoro)
+void pomodoro_destroy(pomodoro_t *pomodoro)
 {
     if (!pomodoro)
     {
@@ -81,7 +83,7 @@ void pomdooro_destroy(pomodoro_t *pomodoro)
     free(pomodoro);
 }
 
-void pomodoro_set_state(pomodoro_t *pomodoro, pomodoro_state_t new_state)
+void pomodoro_set_state(pomodoro_t *pomodoro, const pomodoro_state_t new_state)
 {
     if (!pomodoro)
     {
@@ -89,6 +91,7 @@ void pomodoro_set_state(pomodoro_t *pomodoro, pomodoro_state_t new_state)
         return;
     }
 
+    pomodoro->previous_state = pomodoro->current_state;
     pomodoro->current_state = new_state;
 
     if (pomodoro->config.state_transition_callback)
@@ -115,35 +118,6 @@ void pomodoro_set_state(pomodoro_t *pomodoro, pomodoro_state_t new_state)
         vTaskDelete(pomodoro_ticker_handle);
         pomodoro_ticker_handle = NULL;
         break;
-    default:
-        break;
-    }
-}
-
-void pomodoro_go_to_next_state(pomodoro_t *pomodoro)
-{
-    if (!pomodoro)
-    {
-        ESP_LOGE(TAG, "Invalid pomodoro timer");
-        return;
-    }
-    switch (pomodoro->current_state)
-    {
-    case POMODORO_STATE_IDLE:
-    case POMODORO_STATE_LONG_BREAK:
-    case POMODORO_STATE_SHORT_BREAK:
-        pomodoro_set_state(pomodoro, POMODORO_STATE_WORK);
-        break;
-    case POMODORO_STATE_WORK:
-        // Check if next is long break or short break;
-        if (pomodoro->completed_sessions == 0)
-        {
-            pomodoro_set_state(pomodoro, POMODORO_STATE_LONG_BREAK);
-        }
-        else
-        {
-            pomodoro_set_state(pomodoro, POMODORO_STATE_SHORT_BREAK);
-        }
     default:
         break;
     }

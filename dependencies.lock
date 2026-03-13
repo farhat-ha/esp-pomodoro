@@ -10,7 +10,7 @@ dependencies:
       require: private
       version: '>=4.0'
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     version: 4.1.6
   espressif/cmake_utilities:
@@ -228,9 +228,10 @@ dependencies:
       type: service
     version: 9.5.0
 direct_dependencies:
+- espressif/button
 - espressif/esp_lcd_gc9a01
 - espressif/esp_lvgl_adapter
 - idf
-manifest_hash: 89e10f176fa34ba18df8a0181bfd9bc3fa9ab21f8d2d55e98cb40b4286bbd70a
+manifest_hash: 1be53efaaf0f8a2c264454147d8ffd2c06a3d469b41d4e3554d8275028653f7f
 target: esp32c6
 version: 2.0.0
