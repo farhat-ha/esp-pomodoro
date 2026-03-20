@@ -1,12 +1,16 @@
-#include <stdlib.h>
+#include <stdint.h>
 #include "pomodoro.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-#define STACK_SIZE 8192
+#define STACK_DEPTH 8192
+#define TASK_PRIO tskIDLE_PRIORITY + 1
+#define TASK_NAME "pomodoro_task_tick"
+#define TAG "POMODORO"
 
-void pomodoro_go_to_next_state(pomodoro_t *pomodoro);
+bool state_is_active(pomodoro_t *pom);
+
 struct pomodoro_t
 {
     pomodoro_config_t config;
@@ -16,40 +20,7 @@ struct pomodoro_t
     uint8_t completed_sessions;
 };
 
-static const char *TAG = "POMODORO";
-static const char *POMODORO_TASK_NAME = "pomodoro_tick_task";
-
-TaskHandle_t pomodoro_ticker_handle;
-
-void pomodoro_tick_task(void *pvParameters)
-{
-    pomodoro_t *pomodoro = (pomodoro_t *)pvParameters;
-
-    if (!pomodoro)
-    {
-        ESP_LOGE(TAG, "Invalid pomodoro timer");
-        vTaskDelete(NULL);
-    }
-    // Ideally here we want to update our display;
-    while (true)
-    {
-
-        pomodoro->current_timer -= 1;
-        if (pomodoro->config.tick_callback)
-        {
-            pomodoro->config.tick_callback(pomodoro->current_timer, pomodoro->config.context);
-        }
-
-        if (pomodoro->current_timer == 0)
-        {
-            pomodoro->completed_sessions = (pomodoro->completed_sessions + 1) % pomodoro->config.sessions_before_long_break;
-            pomodoro_go_to_next_state(pomodoro);
-            vTaskDelete(NULL);
-            // pomodoro_ticker_handle = NULL;
-        }
-        vTaskDelay(pdMS_TO_TICKS(1000));
-    }
-}
+TaskHandle_t task_handle;
 
 pomodoro_t *pomodoro_init(const pomodoro_config_t *config)
 {
@@ -61,8 +32,9 @@ pomodoro_t *pomodoro_init(const pomodoro_config_t *config)
     }
     pomodoro->config = *config;
     pomodoro->current_state = POMODORO_STATE_IDLE;
-    pomodoro->previous_state = POMODORO_STATE_IDLE;
+    pomodoro->previous_state = POMODORO_STATE_INIT;
     pomodoro->current_timer = pomodoro->config.work_duration_seconds;
+    pomodoro->completed_sessions = 0;
 
     return pomodoro;
 }
@@ -79,46 +51,157 @@ void pomodoro_destroy(pomodoro_t *pomodoro)
         ESP_LOGE(TAG, "Cannot destroy pomodoro timer while it's running");
         return;
     }
-    // TODO: will the config.context leak? should we free it here?
     free(pomodoro);
 }
 
-void pomodoro_set_state(pomodoro_t *pomodoro, const pomodoro_state_t new_state)
+void pomodoro_tick_task(void *pvParameters)
 {
+    pomodoro_t *pomodoro = (pomodoro_t *)pvParameters;
+    
     if (!pomodoro)
     {
         ESP_LOGE(TAG, "Invalid pomodoro timer");
+        vTaskDelete(NULL);
+    }
+    ESP_LOGW(TAG, "PRECONDITION MET!!");
+
+    while (pomodoro->current_timer > 0)
+    {
+        ESP_LOGW(TAG, "IN LOOP");
+        pomodoro->current_timer -= 1;
+        if (pomodoro->config.tick_callback)
+            pomodoro->config.tick_callback(pomodoro->current_timer, NULL);
+
+        if (pomodoro->current_timer == 0)
+        {
+            if (pomodoro->current_state == POMODORO_STATE_WORK)
+                pomodoro->completed_sessions = (pomodoro->completed_sessions + 1) % pomodoro->config.sessions_before_long_break;
+            return pomodoro_stop(pomodoro);
+        }
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+    vTaskDelete(NULL);
+}
+
+void pomodoro_stop(pomodoro_t *pom)
+{
+    if (!pom)
+    {
+        ESP_LOGE(TAG, "go_to_idle(): invalid pomodoro");
+        return;
+    }
+    if (task_handle)
+    {
+        vTaskDelete(task_handle);
+        task_handle = NULL;
+    }
+    pom->previous_state = pom->current_state;
+    pom->current_state = POMODORO_STATE_IDLE;
+    if (pom->config.state_transition_callback)
+        pom->config.state_transition_callback(POMODORO_STATE_IDLE, NULL);
+}
+
+void pomodoro_start(pomodoro_t *pom)
+{
+
+    if (!pom)
+    {
+        ESP_LOGE(TAG, "pomodoro_start(): invalid pomodoro");
+        return;
+    }
+    if (state_is_active(pom))
+    {
+        ESP_LOGE(TAG, "pomodoro_start(): already in active state %s", pom->current_state);
         return;
     }
 
-    pomodoro->previous_state = pomodoro->current_state;
-    pomodoro->current_state = new_state;
-
-    if (pomodoro->config.state_transition_callback)
-    {
-        pomodoro->config.state_transition_callback(pomodoro->current_state, pomodoro->config.context);
-    }
-
-    switch (new_state)
+    uint16_t next_timer = pom->current_timer;
+    pomodoro_state_t next_state = POMODORO_STATE_WORK;
+    switch (pom->previous_state)
     {
     case POMODORO_STATE_WORK:
-        pomodoro->current_timer = pomodoro->config.work_duration_seconds;
-        xTaskCreate(&pomodoro_tick_task, POMODORO_TASK_NAME, STACK_SIZE, pomodoro, tskIDLE_PRIORITY + 1, &pomodoro_ticker_handle);
+        next_timer = pom->config.work_duration_seconds;
+        next_state = POMODORO_STATE_WORK;
         break;
     case POMODORO_STATE_SHORT_BREAK:
-        pomodoro->current_timer = pomodoro->config.short_break_duration_seconds;
-        xTaskCreate(&pomodoro_tick_task, POMODORO_TASK_NAME, STACK_SIZE, pomodoro, tskIDLE_PRIORITY + 1, &pomodoro_ticker_handle);
+        next_timer = pom->config.short_break_duration_seconds;
+        next_state = POMODORO_STATE_SHORT_BREAK;
         break;
     case POMODORO_STATE_LONG_BREAK:
-        pomodoro->current_timer = pomodoro->config.long_break_duration_seconds;
-        xTaskCreate(&pomodoro_tick_task, POMODORO_TASK_NAME, STACK_SIZE, pomodoro, tskIDLE_PRIORITY + 1, &pomodoro_ticker_handle);
+        next_timer = pom->config.long_break_duration_seconds;
+        next_state = POMODORO_STATE_LONG_BREAK;
         break;
-    case POMODORO_STATE_IDLE:
-        pomodoro->current_timer = 0;
-        vTaskDelete(pomodoro_ticker_handle);
-        pomodoro_ticker_handle = NULL;
+    case POMODORO_STATE_INIT:
+        next_timer = pom->config.work_duration_seconds;
+        next_state = POMODORO_STATE_WORK;
+        break;
+    case POMODORO_STATE_PAUSE:
+        next_timer = pom->current_timer;
+        next_state = POMODORO_STATE_WORK;
         break;
     default:
+        ESP_LOGE(TAG, "pomodoro_start(): invalid previous state");
         break;
+    }
+
+    pom->current_timer = next_timer;
+    pom->current_state = next_state;
+
+    xTaskCreate(pomodoro_tick_task, TASK_NAME, STACK_DEPTH, (void *)pom, TASK_PRIO, &task_handle);
+    if (pom->config.state_transition_callback)
+        pom->config.state_transition_callback(next_state, NULL);
+}
+
+void pomodoro_reset(pomodoro_t *pom)
+{
+    if (!pom)
+    {
+        ESP_LOGE(TAG, "pomodoro_stop(): invalid pomodoro");
+        return;
+    }
+    if (pom->current_state != POMODORO_STATE_IDLE)
+    {
+        ESP_LOGE(TAG, "pomodoro_stop(): pomodoro is not idle");
+        return;
+    }
+
+    pom->previous_state = POMODORO_STATE_IDLE;
+    pom->current_state = POMODORO_STATE_IDLE;
+    if (pom->config.state_transition_callback)
+        pom->config.state_transition_callback(POMODORO_STATE_IDLE, NULL);
+}
+
+bool state_is_active(pomodoro_t *pom)
+{
+    switch (pom->current_state)
+    {
+    case POMODORO_STATE_WORK:
+    case POMODORO_STATE_SHORT_BREAK:
+    case POMODORO_STATE_LONG_BREAK:
+        return true;
+    default:
+        return false;
+    }
+}
+
+char *state_to_string(pomodoro_state_t state)
+{
+    switch (state)
+    {
+    case POMODORO_STATE_INIT:
+        return "POMODORO_STATE_INIT";
+    case POMODORO_STATE_IDLE:
+        return "POMODORO_STATE_IDLE";
+
+    case POMODORO_STATE_WORK:
+        return "POMODORO_STATE_WORK";
+    case POMODORO_STATE_SHORT_BREAK:
+        return "POMODORO_STATE_SHORT_BREAK";
+    case POMODORO_STATE_LONG_BREAK:
+        return "POMODORO_STATE_LONG_BREAK";
+    case POMODORO_STATE_PAUSE:
+        return "POMODORO_STATE_PAUSE";
+    default:
+        return "INVALID STATE!";
     }
 }

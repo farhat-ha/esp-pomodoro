@@ -4,10 +4,12 @@
 
 typedef enum
 {
+    POMODORO_STATE_INIT,
     POMODORO_STATE_IDLE,
     POMODORO_STATE_WORK,
     POMODORO_STATE_SHORT_BREAK,
     POMODORO_STATE_LONG_BREAK,
+    POMODORO_STATE_PAUSE
 } pomodoro_state_t;
 
 typedef struct pomodoro_t pomodoro_t;
@@ -28,4 +30,8 @@ typedef struct
 
 pomodoro_t *pomodoro_init(const pomodoro_config_t *config);
 void pomodoro_destroy(pomodoro_t *pomodoro);
-void pomodoro_set_state(pomodoro_t *pomodoro, pomodoro_state_t new_state);
+void pomodoro_stop(pomodoro_t *pom);
+void pomodoro_start(pomodoro_t *pom);
+void pomodoro_pause(pomodoro_t *pom);
+
+char * state_to_string(pomodoro_state_t state);
