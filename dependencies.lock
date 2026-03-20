@@ -232,6 +232,6 @@ direct_dependencies:
 - espressif/esp_lcd_gc9a01
 - espressif/esp_lvgl_adapter
 - idf
-manifest_hash: 1be53efaaf0f8a2c264454147d8ffd2c06a3d469b41d4e3554d8275028653f7f
+manifest_hash: e5771de30d9a7620f99c17a6ba78850d3d04138546497a116b417dd925c23463
 target: esp32c6
 version: 2.0.0
