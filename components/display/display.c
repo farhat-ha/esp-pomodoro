@@ -1,75 +1,70 @@
 #include "display.h"
-#include "esp_log.h"
-#include "esp_lcd_panel_io_interface.h"
-#include "esp_lcd_panel_io.h"
-#include "esp_lcd_panel_ops.h"
-#include "esp_lcd_gc9a01.h"
 #include "driver/gpio.h"
-#include "driver/i2c_master.h"
+#include "esp_heap_caps.h"
+#include "driver/spi_master.h"
+#include "esp_lcd_io_spi.h"
+#include "esp_lcd_panel_ops.h"
+#include "esp_lcd_st7796.h"
 
-#define H_RES 240
-#define V_RES 240
-#define BPP 16
-#define MAX_TRANSACTION_SIZE H_RES * 80 * BPP / 8
+#define LINES_PER_CHUNK 32   // tune this
 
-// PINS
-#define CLK_PIN GPIO_NUM_9
-#define DATA_PIN GPIO_NUM_18
-#define RESET_PIN GPIO_NUM_19
-#define DC_PIN GPIO_NUM_20
-#define CS_PIN GPIO_NUM_21
-#define BLK_PIN GPIO_NUM_7
 
-static const char *TAG = "display.c";
-static const spi_bus_config_t bus_config = GC9A01_PANEL_BUS_SPI_CONFIG(
-    CLK_PIN,
-    DATA_PIN,
-    MAX_TRANSACTION_SIZE);
-
-static const esp_lcd_panel_io_spi_config_t spi_panel_config = GC9A01_PANEL_IO_SPI_CONFIG(
-    CS_PIN, DC_PIN, NULL, NULL);
-static const esp_lcd_panel_dev_config_t panel_config = {
-    .bits_per_pixel = BPP,
-    .reset_gpio_num = RESET_PIN,
-    .rgb_endian = COLOR_RGB_ELEMENT_ORDER_RGB,
+spi_bus_config_t bus_config = {
+    .sclk_io_num = SPI_CLK,
+    .mosi_io_num = SPI_MOSI,
+    .miso_io_num = -1,
+    .quadwp_io_num = -1,
+    .quadhd_io_num = -1,
+    .max_transfer_sz = SCREEN_W * 80 * sizeof(uint16_t)
+};
+esp_lcd_panel_io_spi_config_t panel_io_config = {
+    .cs_gpio_num = SPI_CS,
+    .dc_gpio_num = SPI_DC,
+    .spi_mode = 0,
+    .pclk_hz = 40 * 1000 * 1000,
+    .trans_queue_depth = 10,
+    .lcd_cmd_bits = 8,
+    .lcd_param_bits = 8
 };
 
-static esp_lcd_panel_handle_t panel_handle;
-static esp_lcd_panel_io_handle_t io_handle;
+esp_lcd_panel_dev_config_t panel_config = {
+    .reset_gpio_num = SPI_RST,
+    .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_BGR,
+    .bits_per_pixel = 16,
+};
 
-void init_display()
-{
-    ESP_ERROR_CHECK(
-        spi_bus_initialize(SPI2_HOST, &bus_config, SPI_DMA_CH_AUTO));
-    ESP_ERROR_CHECK(
-        esp_lcd_new_panel_io_spi(
-            (esp_lcd_spi_bus_handle_t)SPI2_HOST, &spi_panel_config, &io_handle));
-    ESP_ERROR_CHECK(
-        esp_lcd_new_panel_gc9a01(io_handle, &panel_config, &panel_handle));
-    ESP_ERROR_CHECK(
-        esp_lcd_panel_reset(panel_handle));
-    ESP_ERROR_CHECK(
-        esp_lcd_panel_init(panel_handle));
-    ESP_ERROR_CHECK(
-        esp_lcd_panel_invert_color(panel_handle, true));
-    ESP_ERROR_CHECK(
-        esp_lcd_panel_mirror(panel_handle, true, false));
+esp_lcd_panel_io_handle_t panel_io = nullptr;
+esp_lcd_panel_handle_t panel = nullptr;
+uint16_t *frame_buffer = nullptr;
 
-    ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_handle, false));
-    ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_handle, true));
 
-    ESP_ERROR_CHECK(gpio_set_direction(BLK_PIN, GPIO_MODE_OUTPUT));
-    ESP_ERROR_CHECK(gpio_set_level(BLK_PIN, 1));
-
-    ESP_LOGI(TAG, "All good :+1:");
+void display_backlight(const bool state) {
+    gpio_set_direction(SPI_BL, GPIO_MODE_OUTPUT);
+    gpio_set_level(SPI_BL, state);
 }
 
-esp_lcd_panel_handle_t display_get_panel_handle()
-{
-    return panel_handle;
+void display_init(void) {
+    ESP_ERROR_CHECK(spi_bus_initialize(SPI2_HOST, &bus_config, SPI_DMA_CH_AUTO));
+    ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi(SPI2_HOST,&panel_io_config, &panel_io));
+    ESP_ERROR_CHECK(esp_lcd_new_panel_st7796_general(panel_io, &panel_config, &panel));
+    ESP_ERROR_CHECK(esp_lcd_panel_reset(panel));
+    ESP_ERROR_CHECK(esp_lcd_panel_init(panel));
+    ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel, true));
+    ESP_ERROR_CHECK(esp_lcd_panel_swap_xy(panel, true));
+    display_backlight(true);
 }
 
-esp_lcd_panel_io_handle_t display_get_io_handle()
-{
-    return io_handle;
+
+void display_destroy(void) {
+    free(frame_buffer);
+    frame_buffer = nullptr;
+}
+
+
+esp_lcd_panel_handle_t display_get_panel_handle(void) {
+    return panel;
+}
+
+esp_lcd_panel_io_handle_t display_get_io_handle(void) {
+    return panel_io;
 }
